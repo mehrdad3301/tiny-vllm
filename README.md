@@ -455,7 +455,7 @@ To turn text into a sequence of tokens, you need a tokenizer. We will use an exi
 
 Going deep into tokenizers is out of the scope, what you really need to remember is that it takes a text and produces a sequence of tokens (ints), which represent your text but as a vector of ints. And LLM needs your text as this vector of ints.
 
-> Building your own tokenizer is quite a fun thing. I wrote mine 3 years ago and feel free to use it as a reference, if you'd like to learn more about tokenizers: [https://github.com/jmaczan/bpe-tokenizer](https://github.com/jmaczan/bpe-tokenizer). There's also a great resource from Andrej Karpathy where he builds a tokenizer, and it's a very useful and educational video [https://www.youtube.com/watch?v=zduSFxRajkE](https://www.youtube.com/watch?v=zduSFxRajkE), code [https://github.com/karpathy/minbpe](https://github.com/karpathy/minbpe) and this article [https://github.com/karpathy/minbpe/blob/master/lecture.md](https://github.com/karpathy/minbpe/blob/master/lecture.md)
+> Building your own tokenizer is quite a fun thing. I wrote mine 3 years ago and feel free to use [it](https://github.com/jmaczan/bpe-tokenizer) as a reference, if you'd like to learn more about tokenizers. There's also a great resource from Andrej Karpathy where he builds a tokenizer, and it's a very useful and educational [video](https://www.youtube.com/watch?v=zduSFxRajkE), [code](https://github.com/karpathy/minbpe) and [article](https://github.com/karpathy/minbpe/blob/master/lecture.md)
 
 ## Embeddings
 
@@ -626,7 +626,7 @@ Let's move back from computation and low-level programming to semantics/meaning 
 
 ## RMSNorm and parallel reduction in CUDA
 
-Look back at the sequence of operations in our model (section [Safetensors and your model](#safetensors-and-your-model)). After we retrieve the embeddings for our tokens, it's time for [RMSNorm](https://arxiv.org/abs/1910.07467). Unlike embeddings gather, it's a first operation that will run in layers. Our model, Llama 3.2 1B, has 16 layers. RMSNorm takes our retrieved embeddings and - using model weights for the rms norm `weights.input_layernorm[layer]` - runs RMSNorm function. RMSNorm is an operation that modifies all numbers in an embedding. To do that, first it needs to see all the elements and compute their [root mean square](https://en.wikipedia.org/wiki/Root_mean_square) sum.
+Look back at the sequence of operations in our model (section [Safetensors and your model](#safetensors-and-your-model)). After we retrieve the embeddings for our tokens, it's time for [RMSNorm](https://arxiv.org/abs/1910.07467). Unlike embeddings gather, it's a first operation that will run in layers. Our model, Llama 3.2 1B, has 16 layers. RMSNorm takes our retrieved embeddings and - using model weights for the RMS norm `weights.input_layernorm[layer]` - runs RMSNorm function. RMSNorm is an operation that modifies all numbers in an embedding. To do that, first it needs to see all the elements and compute their [root mean square](https://en.wikipedia.org/wiki/Root_mean_square) sum.
 
 Based on the paper, the formula is:
 
@@ -912,7 +912,7 @@ It turns out we don't have to modify the data format to use cuBLAS matrix multip
 
 $$[A^T]_{ij}=[A]_{ji} \qquad C^T=B^T \times A^T \qquad (A^T)^T=A$$
 
-The `$^T$` means that we transpose the matrix. Transposing a matrix turns columns into rows, and rows into columns. When you store the matrix in row-major format, and cuBLAS reads it in column-major format, it's an equivalent of transposing the matrix.
+The $^T$ means that we transpose the matrix. Transposing a matrix turns columns into rows, and rows into columns. When you store the matrix in row-major format, and cuBLAS reads it in column-major format, it's an equivalent of transposing the matrix.
 
 Let's see an example to understand it better: we want to compute $C = A \times B$, where A has dimensions (5, 2048) and B has dimensions (512, 2048). Our desired dimension of C is (5, 512). Right now, A and B dimensions are incompatible: $A(5, 2048)$ and $B(512, 2048)$. Do you remember that to get $C(M,N)$ we need $A(M,K)$ and $B(K,N)$? In other words, the second dimension of A and first dimension of B need to be equal. To achieve that, we need to transpose B. The formula becomes now: $C = A \times B^T$. The dimensions are ok now: $A(5,2048) \times B(2048, 512) = C(5, 512)$. Okay, so we would like to use cuBLAS now to compute the C.
 
