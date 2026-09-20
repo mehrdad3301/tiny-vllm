@@ -816,9 +816,85 @@ __global__ void rmsNormKernel(__nv_bfloat16 *input, __nv_bfloat16 *output, __nv_
 
 ## RoPE
 
-In our reference model, the next operation after RMSNorm is [RoPE](https://arxiv.org/pdf/2104.09864), a way of encoding tokens position into the hidden state (embedding). Very approachable description of positional encoding using RoPE is [here by Christopher Fleetwood](https://fleetwood.dev/posts/you-could-have-designed-SOTA-positional-encoding).
+In our reference model, after RMSNorm we create the $Q$ and $K$ projections and then apply [RoPE](https://arxiv.org/pdf/2104.09864), a way of encoding token's position into the hidden state (embedding). If we don't encode position, the model has no way of telling the difference between the sequence "I am a cat" and "cat am I a"! Very approachable description of positional encoding using RoPE is [here by Christopher Fleetwood](https://fleetwood.dev/posts/you-could-have-designed-SOTA-positional-encoding). 
 
-Try to write it on your own, if you have an energy for that. If not, here's my finished kernel. There are some things that I could optimize, like some values can be precomputed once and then shared - see theta and angles
+So far, we've taken a bunch of tokens and embedded them into vectors of 2048 dimension and applied RMSNorm. Before we do RoPE, we need to create two matrices, $K$ and $Q$. [Attention section](#attention) explains in detail what these matrices are. For now, all we need to know is that we take each token's 2048-dimensional vector and apply two linear projections: one produces a 2048-dimensional $Q$ (query) vector, and the other produces a 512-dimensional $K$ (key) vector. The math is as follows: 
+
+$$
+Q = XW_Q
+$$
+
+$$
+K = XW_K
+$$
+
+where, for this model,
+
+$$
+X \in \mathbb{R}^{T \times 2048}, \qquad
+W_Q \in \mathbb{R}^{2048 \times 2048}, \qquad
+W_K \in \mathbb{R}^{2048 \times 512}
+$$
+
+giving
+
+$$
+Q \in \mathbb{R}^{T \times 2048}, \qquad
+K \in \mathbb{R}^{T \times 512}.
+$$
+
+Here, $T$ is the number of tokens in the input. There is one final detail to understand before we get to RoPE. Take $Q$ and $K$ and divide them into segments with length 64. That means that for each token, $Q$ represents $2048 / 64 = 32$ different queries! Similarily, we have $512 / 64 = 8$ different keys for each token. The number 64 is defined as `HEAD_DIM` in the code. More about that later when we explain multi-headed attention. It is ok if you don't understand some of the concepts here. Sometimes you need to move forward and come back to a section again later to fully understand it. For now, just try to focus on the operations involved.  
+
+We are finally ready for RoPE. For each pair within a head in the input, we [rotate](https://en.wikipedia.org/wiki/Rotation_matrix) it as follows:  
+
+
+$$
+\mathrm{angle}_{p,i} = p \cdot \theta_i
+$$
+
+where
+
+$$
+\theta_i = \frac{1}{500000^{\frac{2i}{\mathrm{HEAD\_DIM}}}}
+$$
+
+The rotation is then:
+
+$$
+x'_{2i} =
+x_{2i}\cos(\mathrm{angle}_{p,i})
+-
+x_{2i+1}\sin(\mathrm{angle}_{p,i})
+$$
+
+$$
+x'_{2i+1} =
+x_{2i}\sin(\mathrm{angle}_{p,i})
++
+x_{2i+1}\cos(\mathrm{angle}_{p,i})
+$$
+
+Or, equivalently, as a matrix multiplication:
+
+$$
+\begin{bmatrix}
+x'_{2i} \\
+x'_{2i+1}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\cos(\mathrm{angle}_{p,i}) & -\sin(\mathrm{angle}_{p,i}) \\
+\sin(\mathrm{angle}_{p,i}) & \cos(\mathrm{angle}_{p,i})
+\end{bmatrix}
+\begin{bmatrix}
+x_{2i} \\
+x_{2i+1}
+\end{bmatrix}
+$$
+
+Here, $i$ identifies the pair of dimensions we are rotating within a head. Since each head has 64 dimensions, there are $64 / 2 = 32$ such pairs, so $i$ goes from 0 to 31. $p$ is the position of the token in the sequence.
+
+Try to write the kernel on your own, if you have an energy for that. If not, here's my finished kernel. There are some things that I could optimize, like some values can be precomputed once and then shared - see theta and angles
 
 ```cpp
 __global__ void ropeKernel(__nv_bfloat16 *input, int num_tokens, int proj_dim)
@@ -858,7 +934,31 @@ void rope(__nv_bfloat16 *input, int num_tokens, int proj_dim)
 }
 ```
 
-< TODO describe in more details >
+You may want to read this part after you've read [attention](#attention). For each key and query, attention computes how interesting the key is to the query using a [dot product](https://en.wikipedia.org/wiki/Dot_product).  
+
+For a query $q_i$ at position $i$ and a key $k_j$ at position $j$, the attention score is:
+
+$$
+q_i^T k_j
+$$
+
+Let's add RoPE to this and do a little bit of mathematics: 
+
+$$
+(R(i)q_i)^T(R(j)k_j)
+$$
+
+where $R(i)$ and $R(j)$ are the rotations corresponding to the positions $i$ and $j$. We can rearrange this as:
+
+$$
+\begin{aligned}
+(R(i)q_i)^T(R(j)k_j)
+&= q_i^T R(i)^T R(j) k_j \
+&= q_i^T R(j-i) k_j
+\end{aligned}
+$$
+
+The important part is $R(j-i)$: the attention score now depends on the relative position $(j-i)$ between the query and the key. Pretty cool huh? Where two tokens are relative to each other, now affects their attention score. 
 
 ## Residual connections
 
@@ -922,7 +1022,7 @@ But cuBLAS expects column-major format of A and B. Row-major transposed will giv
 cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, KV_DIM, num_active_slots, EMBEDDING_LENGTH, &k_proj_alpha, weights.w_k[layer], CUDA_R_16BF, EMBEDDING_LENGTH, rms_norms, CUDA_R_16BF, EMBEDDING_LENGTH, &k_proj_beta, k_proj_batched_buffer, CUDA_R_16BF, KV_DIM, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
 ```
 
-I want to preempt the last confusion you might have if you actually dig into the code. The flags `CUBLAS_OP_T` and `CUBLAS_OP_N` tell the cuBLAS which matrices to transpose. And we just derived the formula $C^T=B \times A^T$, so why do we now tell the cuBLAS to transpose the first matrix $B$? To understand it, think about column- / row-major again. From cuBLAS perspective, our row-major $B$ is transposed $B^T$, because cuBLAS reads it as if it were column-major. So we need to tell cuBLAS to transpose it, to get back the $B$ we derived. Similarly, since we derived that the second argument should be $A^T$, and cuBLAS reads row-major $A$ as a column-major $A^T$, then don't transpose it again, because it's how we wanted to provide it to the cublasGemmEx. Q.E.D. :D
+I want to preempt the last confusion you might have if you actually dig into the code. The flags `CUBLAS_OP_T` and `CUBLAS_OP_N` tell the cuBLAS which matrices to transpose. And we just derived the formula $C^T=B \times A^T$, so why do we now tell the cuBLAS to transpose the first matrix $B$? To understand it, think about column- / row-major again. From cuBLAS perspective, our row-major $B$ is transposed $B^T$, because cuBLAS reads it as if it were column-major. So we need to tell cuBLAS to transpose it, to get back the $B$ we derived. Similarily, since we derived that the second argument should be $A^T$, and cuBLAS reads row-major $A$ as a column-major $A^T$, then don't transpose it again, because it's how we wanted to provide it to the cublasGemmEx. Q.E.D. :D
 
 > I will publish this section in slightly different form in [Paged Out! Issue #9 in the article "The cuBLAS transposition trick"](https://pagedout.institute/)
 
