@@ -821,19 +821,19 @@ In our reference model, after RMSNorm we create the $Q$ and $K$ projections and 
 So far, we've taken a bunch of tokens and embedded them into vectors of 2048 dimension and applied RMSNorm. Before we do RoPE, we need to create two matrices, $K$ and $Q$. [Attention section](#attention) explains in detail what these matrices are. For now, all we need to know is that we take each token's 2048-dimensional vector and apply two linear projections: one produces a 2048-dimensional $Q$ (query) vector, and the other produces a 512-dimensional $K$ (key) vector. The math is as follows: 
 
 $$
-Q = XW_Q
+Q = XW_{Q}
 $$
 
 $$
-K = XW_K
+K = XW_{K}
 $$
 
 where, for this model,
 
 $$
 X \in \mathbb{R}^{T \times 2048}, \qquad
-W_Q \in \mathbb{R}^{2048 \times 2048}, \qquad
-W_K \in \mathbb{R}^{2048 \times 512}
+W_{Q} \in \mathbb{R}^{2048 \times 2048}, \qquad
+W_{K} \in \mathbb{R}^{2048 \times 512}
 $$
 
 giving
@@ -849,13 +849,13 @@ We are finally ready for RoPE. For each pair within a head in the input, we [rot
 
 
 $$
-\mathrm{angle}_{p,i} = p \cdot \theta_i
+\mathrm{angle}_{p,i} = p \cdot \theta_{i}
 $$
 
 where
 
 $$
-\theta_i = \frac{1}{500000^{\frac{2i}{\mathrm{HEAD\_DIM}}}}
+\theta_{i} = \frac{1}{500000^{\frac{2i}{\mathrm{HEAD\_DIM}}}}
 $$
 
 The rotation is then:
@@ -936,25 +936,25 @@ void rope(__nv_bfloat16 *input, int num_tokens, int proj_dim)
 
 You may want to read this part after you've read [attention](#attention). For each key and query, attention computes how interesting the key is to the query using a [dot product](https://en.wikipedia.org/wiki/Dot_product).  
 
-For a query $q_i$ at position $i$ and a key $k_j$ at position $j$, the attention score is:
+For a query $q_{i}$ at position $i$ and a key $k_{j}$ at position $j$, the attention score is:
 
 $$
-q_i^T k_j
+q_{i}^{T} k_{j}
 $$
 
 Let's add RoPE to this and do a little bit of mathematics: 
 
 $$
-(R(i)q_i)^T(R(j)k_j)
+(R(i)q_{i})^{T}(R(j)k_{j})
 $$
 
 where $R(i)$ and $R(j)$ are the rotations corresponding to the positions $i$ and $j$. We can rearrange this as:
 
 $$
 \begin{aligned}
-(R(i)q_i)^T(R(j)k_j)
-&= q_i^T R(i)^T R(j) k_j \
-&= q_i^T R(j-i) k_j
+(R(i)q_{i})^{T}(R(j)k_{j})
+&= q_{i}^{T} R(i)^{T} R(j) k_{j} \\
+&= q_{i}^{T} R(j-i) k_{j}
 \end{aligned}
 $$
 
