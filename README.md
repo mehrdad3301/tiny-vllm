@@ -1060,11 +1060,45 @@ void silu(__nv_bfloat16 *a, __nv_bfloat16 *b, int num_tokens)
 
 ## Softmax
 
-[Softmax](https://en.wikipedia.org/wiki/Softmax_function) is a function that normalizes all elements in a vector. This one is a first, "sequential" version of a softmax. We will derive and implement the "online" version of it later. 
+[Softmax](https://en.wikipedia.org/wiki/Softmax_function) is a function that normalizes all elements in a vector. This one is a first, "sequential" version of a softmax. We will derive and implement the "online" version of it later. Here is the formula for softmax. 
 
-$$ \sigma(v)=\frac{e^{v_i}}{\sum_{j=1}{K}e^{v_j}} $$
+$$ \sigma(v)_i=\frac{e^{v_i}}{\sum_{j=1}^{K}e^{v_j}} $$
 
-The way you can implement it is very similar to RMSNorm we implemented earlier.
+But that's not what we are gonna implement. The problem is that the $e^{v_i}$ is an [exponential function](https://en.wikipedia.org/wiki/Exponential_function). That means it can easily overflow. To avoid that, we subtract the $\max_k v_k$ from each $v_i$. This is the numerically stable version of softmax.
+
+$$
+\sigma(v)_i
+=
+\frac{e^{v_i - m}}{\sum_{j} e^{v_j - m}}
+\qquad\text{where}\qquad
+m = \max_k v_k
+$$
+
+Let's use some calculus to prove that it yields the same results.  
+
+$$
+\sigma(v - c)_i
+=
+\frac{e^{v_i - c}}{\sum_{j} e^{v_j - c}}
+=
+\frac{e^{v_i}\,e^{-c}}{e^{-c}\sum_{j} e^{v_j}}
+=
+\frac{e^{v_i}}{\sum_{j} e^{v_j}}
+=
+\sigma(v)_i
+$$
+
+If we choose $c = \max_k v_k$, every shifted logit is $\le 0$:
+
+$$
+v_i - \max_k v_k \le 0
+\qquad\Rightarrow\qquad
+e^{v_i - \max_k v_k} \in (0, 1]
+$$
+
+so the exponentials cannot overflow!
+
+For this part you need to implement maximum and summation using the same parallel reduction technique, similar to RMSNorm that we implemented earlier. 
 
 ```cpp
 __global__ void softmaxKernel(__nv_bfloat16 *input, int num_tokens)
