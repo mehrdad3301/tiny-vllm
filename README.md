@@ -820,77 +820,38 @@ In our reference model, after RMSNorm we create the $Q$ and $K$ projections and 
 
 So far, we've taken a bunch of tokens and embedded them into vectors of 2048 dimension and applied RMSNorm. Before we do RoPE, we need to create two matrices, $K$ and $Q$. [Attention section](#attention) explains in detail what these matrices are. For now, all we need to know is that we take each token's 2048-dimensional vector and apply two linear projections: one produces a 2048-dimensional $Q$ (query) vector, and the other produces a 512-dimensional $K$ (key) vector. The math is as follows: 
 
-$$
-Q = XW_{Q}
-$$
+$$Q = XW_{Q}$$
 
-$$
-K = XW_{K}
-$$
+$$K = XW_{K}$$
 
 where, for this model,
 
-$$
-X \in \mathbb{R}^{T \times 2048}, \qquad
-W_{Q} \in \mathbb{R}^{2048 \times 2048}, \qquad
-W_{K} \in \mathbb{R}^{2048 \times 512}
-$$
+$$X \in \mathbb{R}^{T \times 2048}, \qquad W_{Q} \in \mathbb{R}^{2048 \times 2048}, \qquad W_{K} \in \mathbb{R}^{2048 \times 512}$$
 
 giving
 
-$$
-Q \in \mathbb{R}^{T \times 2048}, \qquad
-K \in \mathbb{R}^{T \times 512}.
-$$
+$$Q \in \mathbb{R}^{T \times 2048}, \qquad K \in \mathbb{R}^{T \times 512}.$$
 
 Here, $T$ is the number of tokens in the input. There is one final detail to understand before we get to RoPE. Take $Q$ and $K$ and divide them into segments with length 64. That means that for each token, $Q$ represents $2048 / 64 = 32$ different queries! Similarily, we have $512 / 64 = 8$ different keys for each token. The number 64 is defined as `HEAD_DIM` in the code. More about that later when we explain multi-headed attention. It is ok if you don't understand some of the concepts here. Sometimes you need to move forward and come back to a section again later to fully understand it. For now, just try to focus on the operations involved.  
 
 We are finally ready for RoPE. For each pair within a head in the input, we [rotate](https://en.wikipedia.org/wiki/Rotation_matrix) it as follows:  
 
 
-$$
-\mathrm{angle}_{p,i} = p \cdot \theta_{i}
-$$
+$$\mathrm{angle}_{p,i} = p \cdot \theta_{i}$$
 
 where
 
-$$
-\theta_{i} = \frac{1}{500000^{\frac{2i}{\mathrm{HEAD\_DIM}}}}
-$$
+$$\theta_{i} = \frac{1}{500000^{\frac{2i}{\mathrm{HEAD\_DIM}}}}$$
 
 The rotation is then:
 
-$$
-x'_{2i} =
-x_{2i}\cos(\mathrm{angle}_{p,i})
--
-x_{2i+1}\sin(\mathrm{angle}_{p,i})
-$$
+$$x^{\prime}_{2i} = x_{2i}\cos(\mathrm{angle}_{p,i}) - x_{2i+1}\sin(\mathrm{angle}_{p,i})$$
 
-$$
-x'_{2i+1} =
-x_{2i}\sin(\mathrm{angle}_{p,i})
-+
-x_{2i+1}\cos(\mathrm{angle}_{p,i})
-$$
+$$x^{\prime}_{2i+1} = x_{2i}\sin(\mathrm{angle}_{p,i}) + x_{2i+1}\cos(\mathrm{angle}_{p,i})$$
 
 Or, equivalently, as a matrix multiplication:
 
-$$
-\begin{bmatrix}
-x'_{2i} \\
-x'_{2i+1}
-\end{bmatrix}
-=
-\begin{bmatrix}
-\cos(\mathrm{angle}_{p,i}) & -\sin(\mathrm{angle}_{p,i}) \\
-\sin(\mathrm{angle}_{p,i}) & \cos(\mathrm{angle}_{p,i})
-\end{bmatrix}
-\begin{bmatrix}
-x_{2i} \\
-x_{2i+1}
-\end{bmatrix}
-$$
+$$\begin{bmatrix} x^{\prime}_{2i} \cr x^{\prime}_{2i+1} \end{bmatrix} = \begin{bmatrix} \cos(\mathrm{angle}_{p,i}) & -\sin(\mathrm{angle}_{p,i}) \cr \sin(\mathrm{angle}_{p,i}) & \cos(\mathrm{angle}_{p,i}) \end{bmatrix} \begin{bmatrix} x_{2i} \cr x_{2i+1} \end{bmatrix}$$
 
 Here, $i$ identifies the pair of dimensions we are rotating within a head. Since each head has 64 dimensions, there are $64 / 2 = 32$ such pairs, so $i$ goes from 0 to 31. $p$ is the position of the token in the sequence.
 
@@ -938,25 +899,15 @@ You may want to read this part after you've read [attention](#attention). For ea
 
 For a query $q_{i}$ at position $i$ and a key $k_{j}$ at position $j$, the attention score is:
 
-$$
-q_{i}^{T} k_{j}
-$$
+$$q_{i}^{T} k_{j}$$
 
 Let's add RoPE to this and do a little bit of mathematics: 
 
-$$
-(R(i)q_{i})^{T}(R(j)k_{j})
-$$
+$$(R(i)q_{i})^{T}(R(j)k_{j})$$
 
 where $R(i)$ and $R(j)$ are the rotations corresponding to the positions $i$ and $j$. We can rearrange this as:
 
-$$
-\begin{aligned}
-(R(i)q_{i})^{T}(R(j)k_{j})
-&= q_{i}^{T} R(i)^{T} R(j) k_{j} \\
-&= q_{i}^{T} R(j-i) k_{j}
-\end{aligned}
-$$
+$$\begin{aligned} (R(i)q_{i})^{T}(R(j)k_{j}) &= q_{i}^{T} R(i)^{T} R(j) k_{j} \cr &= q_{i}^{T} R(j-i) k_{j} \end{aligned}$$
 
 The important part is $R(j-i)$: the attention score now depends on the relative position $(j-i)$ between the query and the key. Pretty cool huh? Where two tokens are relative to each other, now affects their attention score. 
 
